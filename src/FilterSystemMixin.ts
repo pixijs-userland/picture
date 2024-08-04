@@ -6,14 +6,21 @@ import {
     Filter,
     FilterState,
     CLEAR_MODES,
-    State
+    State,
+    Renderer
 } from '@pixi/core';
 import { Matrix, Rectangle } from '@pixi/math';
 import { DisplayObject } from '@pixi/display';
 import { BackdropFilter } from './BlendFilter';
 
+interface IPictureRenderer extends Renderer
+{
+    texture: IPictureTextureSystem
+}
+
 export interface IPictureFilterSystem extends FilterSystem
 {
+    renderer: IPictureRenderer;
     prepareBackdrop(sourceFrame: Rectangle, flipY: Float32Array): RenderTexture;
 
     pushWithCheck(target: DisplayObject, filters: Array<Filter>, checkEmptyBounds?: boolean): boolean;
@@ -22,6 +29,12 @@ export interface IPictureFilterSystem extends FilterSystem
 export interface IPictureTextureSystem extends TextureSystem
 {
     bindForceLocation(texture: BaseTexture, location: number): void;
+}
+
+interface IPictureFilterState extends FilterState
+{
+    backdrop?: RenderTexture;
+    backdropFlip?: Float32Array;
 }
 
 function containsRect(rectOut: Rectangle, rectIn: Rectangle): boolean
@@ -60,7 +73,7 @@ function pushWithCheck(this: IPictureFilterSystem,
 {
     const renderer = this.renderer;
     const filterStack = this.defaultFilterStack;
-    const state = this.statePool.pop() || new FilterState();
+    const state: IPictureFilterState = this.statePool.pop() || new FilterState();
     const renderTextureSystem = this.renderer.renderTexture;
 
     let resolution = filters[0].resolution;
@@ -142,9 +155,6 @@ function pushWithCheck(this: IPictureFilterSystem,
     // detect backdrop uniform
     if (canUseBackdrop)
     {
-        let backdrop = null;
-        let backdropFlip = null;
-
         for (let i = 0; i < filters.length; i++)
         {
             const bName = filters[i].backdropUniformName;
@@ -157,30 +167,20 @@ function pushWithCheck(this: IPictureFilterSystem,
                 {
                     uniforms[`${bName}_flipY`] = new Float32Array([0.0, 1.0]);
                 }
-                const flip = uniforms[`${bName}_flipY`];
 
-                if (backdrop === null)
+                if (!state.backdrop)
                 {
-                    backdrop = this.prepareBackdrop(state.sourceFrame, flip);
-                    backdropFlip = flip;
-                }
-                else
-                {
-                    flip[0] = backdropFlip[0];
-                    flip[1] = backdropFlip[1];
-                }
+                    const flip = new Float32Array([0.0, 1.0]);
 
-                uniforms[bName] = backdrop;
-                if (backdrop)
-                {
-                    filters[i]._backdropActive = true;
+                    state.backdrop = this.prepareBackdrop(state.sourceFrame, flip);
+                    state.backdropFlip = flip;
                 }
             }
         }
 
-        if (backdrop)
+        if (state.backdrop)
         {
-            resolution = state.resolution = backdrop.resolution;
+            resolution = state.resolution = state.backdrop.resolution;
         }
     }
 
@@ -226,10 +226,33 @@ function push(this: IPictureFilterSystem,
     return this.pushWithCheck(target, filters, false);
 }
 
+function applyFilter(state: IPictureFilterState, filter: BackdropFilter, filterManager: FilterSystem,
+    input: RenderTexture, output: RenderTexture, clearMode?: CLEAR_MODES, _currentState?: FilterState)
+{
+    const { backdropUniformName: bName, uniforms } = filter;
+
+    if (bName)
+    {
+        if (state.backdrop) uniforms[bName] = state.backdrop;
+        const flip = uniforms[`${bName}_flipY`];
+
+        if (state.backdropFlip && flip)
+        {
+            flip[0] = state.backdropFlip[0];
+            flip[1] = state.backdropFlip[1];
+        }
+    }
+    filter.apply(filterManager, input, output, clearMode, _currentState);
+    if (bName)
+    {
+        uniforms[bName] = null;
+    }
+}
+
 function pop(this: IPictureFilterSystem)
 {
     const filterStack = this.defaultFilterStack;
-    const state = filterStack.pop();
+    const state: IPictureFilterState = filterStack.pop();
     const filters = state.filters as Array<BackdropFilter>;
 
     this.activeState = state;
@@ -292,7 +315,7 @@ function pop(this: IPictureFilterSystem)
 
     if (filterLen === 1)
     {
-        filters[0].apply(this, state.renderTexture, lastState.renderTexture, CLEAR_MODES.BLEND, state);
+        applyFilter(state, filters[0], this, state.renderTexture, lastState.renderTexture, CLEAR_MODES.BLEND, state);
 
         this.returnFilterTexture(state.renderTexture);
     }
@@ -311,7 +334,7 @@ function pop(this: IPictureFilterSystem)
 
         for (i = 0; i < filterLen - 1; ++i)
         {
-            filters[i].apply(this, flip, flop, CLEAR_MODES.CLEAR, state);
+            applyFilter(state, filters[i], this, flip, flop, CLEAR_MODES.CLEAR, state);
 
             const t = flip;
 
@@ -319,7 +342,7 @@ function pop(this: IPictureFilterSystem)
             flop = t;
         }
 
-        filters[i].apply(this, flip, lastState.renderTexture, CLEAR_MODES.BLEND, state);
+        applyFilter(state, filters[i], this, flip, lastState.renderTexture, CLEAR_MODES.BLEND, state);
 
         this.returnFilterTexture(flip);
         this.returnFilterTexture(flop);
@@ -330,22 +353,10 @@ function pop(this: IPictureFilterSystem)
     }
 
     // release the backdrop!
-    let backdropFree = false;
-
-    for (let i = 0; i < filters.length; i++)
+    if (state.backdrop)
     {
-        if (filters[i]._backdropActive)
-        {
-            const bName = filters[i].backdropUniformName;
-
-            if (!backdropFree)
-            {
-                this.returnFilterTexture(filters[i].uniforms[bName]);
-                backdropFree = true;
-            }
-            filters[i].uniforms[bName] = null;
-            filters[i]._backdropActive = false;
-        }
+        this.returnFilterTexture(state.backdrop);
+        state.backdrop = undefined;
     }
 
     state.clear();
@@ -358,7 +369,7 @@ let hadBackbufferError = false;
  * Takes a part of current render target corresponding to bounds
  * fits sourceFrame to current render target frame to evade problems
  */
-function prepareBackdrop(bounds: Rectangle, flipY: Float32Array): RenderTexture
+function prepareBackdrop(this: IPictureFilterSystem, bounds: Rectangle, flipY: Float32Array): RenderTexture
 {
     const renderer = this.renderer;
     const renderTarget = renderer.renderTexture.current;
