@@ -18,8 +18,6 @@ export class BackdropFilter extends Filter
     backdropUniformName: string = null;
 
     trivial = false;
-    /** @ignore */
-    _backdropActive = false;
 
     /** If non-null, @pixi/picture will clear the filter's output framebuffer with this RGBA color. */
     clearColor: Float32Array = null;
