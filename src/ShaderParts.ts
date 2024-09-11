@@ -35,12 +35,12 @@ export const OVERLAY_PART: IBlendModeShaderParts = {
     blendCode: BLEND_OPACITY,
     npmBlendCode: `vec3 B = blendOverlay(base, blend);`,
     uniformCode: `
-float finalBlendOverlay(float base, float blend) 
+float finalBlendOverlay(float base, float blend)
 {
     return mix((1.0-2.0*(1.0-base)*(1.0-blend)), (2.0*base*blend), step(base, 0.5));
 }
 
-vec3 blendOverlay(vec3 base, vec3 blend) 
+vec3 blendOverlay(vec3 base, vec3 blend)
 {
     return vec3(
         finalBlendOverlay(base.r,blend.r),
@@ -57,10 +57,10 @@ export const HARDLIGHT_PART: IBlendModeShaderParts = {
     uniformCode: `
 float blendHardLight(float base, float blend)
 {
-    return mix((1.0-2.0*(1.0-base)*(1.0-blend)), 2.0*base*blend, 1.0 - step(blend, 0.5));
+    return mix((1.0-2.0*(1.0-base)*(1.0-blend)), 2.0*base*blend, 1.0 - step(base, 0.5));
 }
 
-vec3 blendHardLightVec3(vec3 base, vec3 blend) 
+vec3 blendHardLightVec3(vec3 base, vec3 blend)
 {
     return vec3(blendHardLight(base.r,blend.r),blendHardLight(base.g,blend.g),blendHardLight(base.b,blend.b));
 }`,
@@ -68,7 +68,7 @@ vec3 blendHardLightVec3(vec3 base, vec3 blend)
 
 export const SOFTLIGHT_PART: IBlendModeShaderParts = {
     blendCode: BLEND_OPACITY,
-    npmBlendCode: `vec3 B = blendSoftLightVec3(blend, base);`,
+    npmBlendCode: `vec3 B = blendSoftLightVec3(base, blend);`,
     uniformCode: `
 float blendSoftLight(float base, float blend)
 {
@@ -91,7 +91,7 @@ vec3 blendSoftLightVec3(vec3 base, vec3 blend)
 
 export const DARKEN_PART: IBlendModeShaderParts = {
     blendCode: BLEND_OPACITY,
-    npmBlendCode: `vec3 B = blendDarkenVec3(blend, base);`,
+    npmBlendCode: `vec3 B = blendDarkenVec3(base, blend);`,
     uniformCode: `
 float blendDarken(float base, float blend)
 {
@@ -107,7 +107,7 @@ vec3 blendDarkenVec3(vec3 base, vec3 blend)
 
 export const LIGHTEN_PART: IBlendModeShaderParts = {
     blendCode: BLEND_OPACITY,
-    npmBlendCode: `vec3 B = blendLightenVec3(blend, base);`,
+    npmBlendCode: `vec3 B = blendLightenVec3(base, blend);`,
     uniformCode: `
 float blendLighten(float base, float blend)
 {
@@ -123,7 +123,7 @@ vec3 blendLightenVec3(vec3 base, vec3 blend)
 
 export const COLOR_DODGE_PART: IBlendModeShaderParts = {
     blendCode: BLEND_OPACITY,
-    npmBlendCode: `vec3 B = blendColorDodge(blend, base);`,
+    npmBlendCode: `vec3 B = blendColorDodge(base, blend);`,
     uniformCode: `
 float blendColorDodge(float base, float blend) {
     return (blend==1.0)?blend:min(base/(1.0-blend),1.0);
@@ -137,7 +137,7 @@ vec3 blendColorDodge(vec3 base, vec3 blend) {
 
 export const COLOR_BURN_PART: IBlendModeShaderParts = {
     blendCode: BLEND_OPACITY,
-    npmBlendCode: `vec3 B = blendColorBurn(blend, base);`,
+    npmBlendCode: `vec3 B = blendColorBurn(base, blend);`,
     uniformCode: `
 float colorBurn(float base, float blend)
 {
