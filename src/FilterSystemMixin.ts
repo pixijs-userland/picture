@@ -6,6 +6,7 @@ import {
     Filter,
     FilterState,
     CLEAR_MODES,
+    MSAA_QUALITY,
     State
 } from '@pixi/core';
 import { Matrix, Rectangle } from '@pixi/math';
@@ -61,24 +62,50 @@ function pushWithCheck(this: IPictureFilterSystem,
     const renderer = this.renderer;
     const filterStack = this.defaultFilterStack;
     const state = this.statePool.pop() || new FilterState();
-    const renderTextureSystem = this.renderer.renderTexture;
+    const renderTextureSystem = renderer.renderTexture;
+    let currentResolution: number;
+    let currentMultisample: MSAA_QUALITY;
 
-    let resolution = filters[0].resolution;
+    if (renderTextureSystem.current)
+    {
+        const renderTexture = renderTextureSystem.current;
+
+        currentResolution = renderTexture.resolution;
+        currentMultisample = renderTexture.multisample;
+    }
+    else
+    {
+        currentResolution = renderer.resolution;
+        currentMultisample = renderer.multisample;
+    }
+
+    let resolution = filters[0].resolution || currentResolution;
+    let multisample = filters[0].multisample ?? currentMultisample;
+
     let padding = filters[0].padding;
     let autoFit = filters[0].autoFit;
-    let legacy = filters[0].legacy;
+    // We don't know whether it's a legacy filter until it was bound for the first time,
+    // therefore we have to assume that it is if legacy is undefined.
+    let legacy = filters[0].legacy ?? true;
 
     for (let i = 1; i < filters.length; i++)
     {
         const filter = filters[i];
 
-        resolution = Math.min(resolution, filter.resolution);
+        // let's use the lowest resolution
+        resolution = Math.min(resolution, filter.resolution || currentResolution);
+        // let's use the lowest number of samples
+        multisample = Math.min(multisample, filter.multisample ?? currentMultisample);
+        // figure out the padding required for filters
         padding = this.useMaxPadding
+            // old behavior: use largest amount of padding!
             ? Math.max(padding, filter.padding)
+            // new behavior: sum the padding
             : padding + filter.padding;
+        // only auto fit if all filters are autofit
         autoFit = autoFit && filter.autoFit;
 
-        legacy = legacy || filter.legacy;
+        legacy = legacy || (filter.legacy ?? true);
     }
 
     if (filterStack.length === 1)
@@ -97,28 +124,50 @@ function pushWithCheck(this: IPictureFilterSystem,
 
     state.sourceFrame.pad(padding);
 
-    let canUseBackdrop = true;
+    // TODO: use backdrop in case of multisample, only after blit()
+    let canUseBackdrop = !currentMultisample;
+
+    const sourceFrameProjected = (this as any).tempRect.copyFrom(renderTextureSystem.sourceFrame);
+
+    // Project source frame into world space (if projection is applied)
+    if (renderer.projection.transform)
+    {
+        (this as any).transformAABB?.(
+            tempMatrix.copyFrom(renderer.projection.transform).invert(),
+            sourceFrameProjected
+        );
+    }
 
     if (autoFit)
     {
-        const sourceFrameProjected = (this as any).tempRect.copyFrom(renderTextureSystem.sourceFrame);
-
-        // Project source frame into world space (if projection is applied)
-        if (renderer.projection.transform)
-        {
-            (this as any).transformAABB(
-                tempMatrix.copyFrom(renderer.projection.transform).invert(),
-                sourceFrameProjected
-            );
-        }
-
         state.sourceFrame.fit(sourceFrameProjected);
+
+        if (state.sourceFrame.width <= 0 || state.sourceFrame.height <= 0)
+        {
+            state.sourceFrame.width = 0;
+            state.sourceFrame.height = 0;
+        }
     }
     else
     {
         // check if backdrop is obtainable after rejecting autoFit
         canUseBackdrop = containsRect(this.renderer.renderTexture.sourceFrame, state.sourceFrame);
+
+        if (!state.sourceFrame.intersects(sourceFrameProjected))
+        {
+            state.sourceFrame.width = 0;
+            state.sourceFrame.height = 0;
+        }
     }
+
+    // Round sourceFrame in screen space based on render-texture.
+    (this as any).roundFrame(
+        state.sourceFrame,
+        renderTextureSystem.current ? renderTextureSystem.current.resolution : renderer.resolution,
+        renderTextureSystem.sourceFrame,
+        renderTextureSystem.destinationFrame,
+        renderer.projection.transform,
+    );
 
     if (checkEmptyBounds && state.sourceFrame.width <= 1 && state.sourceFrame.height <= 1)
     {
@@ -128,16 +177,6 @@ function pushWithCheck(this: IPictureFilterSystem,
 
         return false;
     }
-    (this as any).roundFrame(
-        state.sourceFrame,
-        renderTextureSystem.current ? renderTextureSystem.current.resolution : renderer.resolution,
-        renderTextureSystem.sourceFrame,
-        renderTextureSystem.destinationFrame,
-        renderer.projection.transform,
-    );
-
-    // round to whole number based on resolution
-    state.sourceFrame.ceil(resolution);
 
     // detect backdrop uniform
     if (canUseBackdrop)
@@ -184,7 +223,8 @@ function pushWithCheck(this: IPictureFilterSystem,
         }
     }
 
-    state.renderTexture = this.getOptimalFilterTexture(state.sourceFrame.width, state.sourceFrame.height, resolution);
+    state.renderTexture = this.getOptimalFilterTexture(state.sourceFrame.width, state.sourceFrame.height,
+        resolution, multisample);
     state.filters = filters;
 
     state.destinationFrame.width = state.renderTexture.width;
@@ -248,8 +288,8 @@ function pop(this: IPictureFilterSystem)
     inputSize[2] = 1.0 / inputSize[0];
     inputSize[3] = 1.0 / inputSize[1];
 
-    inputPixel[0] = inputSize[0] * state.resolution;
-    inputPixel[1] = inputSize[1] * state.resolution;
+    inputPixel[0] = Math.round(inputSize[0] * state.resolution);
+    inputPixel[1] = Math.round(inputSize[1] * state.resolution);
     inputPixel[2] = 1.0 / inputPixel[0];
     inputPixel[3] = 1.0 / inputPixel[1];
 
@@ -311,6 +351,17 @@ function pop(this: IPictureFilterSystem)
 
         for (i = 0; i < filterLen - 1; ++i)
         {
+            if (i === 1 && state.multisample > 1)
+            {
+                flop = this.getOptimalFilterTexture(
+                    flip.width,
+                    flip.height,
+                    state.resolution
+                );
+
+                flop.filterFrame = flip.filterFrame;
+            }
+
             filters[i].apply(this, flip, flop, CLEAR_MODES.CLEAR, state);
 
             const t = flip;
@@ -320,6 +371,11 @@ function pop(this: IPictureFilterSystem)
         }
 
         filters[i].apply(this, flip, lastState.renderTexture, CLEAR_MODES.BLEND, state);
+
+        if (i > 1 && state.multisample > 1)
+        {
+            this.returnFilterTexture(state.renderTexture);
+        }
 
         this.returnFilterTexture(flip);
         this.returnFilterTexture(flop);
@@ -347,6 +403,8 @@ function pop(this: IPictureFilterSystem)
             filters[i]._backdropActive = false;
         }
     }
+
+    // lastState.renderTexture is blitted when lastState is popped
 
     state.clear();
     this.statePool.push(state);
