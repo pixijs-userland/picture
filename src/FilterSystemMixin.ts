@@ -125,7 +125,7 @@ function pushWithCheck(this: IPictureFilterSystem,
     state.sourceFrame.pad(padding);
 
     // TODO: use backdrop in case of multisample, only after blit()
-    let canUseBackdrop = !currentMultisample;
+    let canUseBackdrop = true; // !currentMultisample;
 
     const sourceFrameProjected = (this as any).tempRect.copyFrom(renderTextureSystem.sourceFrame);
 
