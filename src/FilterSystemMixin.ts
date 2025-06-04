@@ -406,6 +406,10 @@ function prepareBackdrop(bounds: Rectangle, flipY: Float32Array): RenderTexture
     {
         flipY[0] = h / rt.height;
     }
+    else
+    {
+        flipY[0] = 0;
+    }
 
     rt.filterFrame = fr;
     rt.setResolution(resolution);

@@ -1,6 +1,6 @@
 {
   "name": "@pixi/picture",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "PixiJS v7 advanced filter renderer, implements advanced blending modes",
   "author": "Ivan Popelyshev",
   "contributors": [
